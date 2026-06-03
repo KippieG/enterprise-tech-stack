@@ -1,110 +1,241 @@
 # ERP — Business Central
 
-## Overzicht
+## Wat is een ERP en waarom Business Central?
 
-Microsoft Dynamics 365 Business Central (BC) is het ERP-systeem voor kleine tot middelgrote bedrijven. Het beheert financiën, verkoop, inkoop, voorraad, productie en projecten. Business Central is uitbreidbaar via **AL-code** (Application Language) en integreert met de rest van de Microsoft stack.
+Een **ERP (Enterprise Resource Planning)** systeem is de ruggengraat van een bedrijf. Het integreert alle kernprocessen in één systeem: financiën, verkoop, inkoop, voorraad, productie en HR.
+
+**Zonder ERP:**
+- Financiële data in Excel
+- Klantgegevens in een apart CRM
+- Voorraad in een spreadsheet
+- Facturen handmatig opgesteld
+- Niemand heeft een compleet beeld van het bedrijf
+
+**Met Business Central:**
+- Één databron voor alles
+- Verkoopafdeling ziet de actuele voorraad
+- Boekhouding krijgt facturen automatisch vanuit de operatie
+- Management heeft real-time inzicht in KPI's
+
+**Microsoft Dynamics 365 Business Central** is de cloud ERP voor kleine en middelgrote bedrijven. Het is uitbreidbaar via **AL (Application Language)** — de programmeertaal om BC aan te passen zonder de basisdcode te raken.
 
 ---
 
-## Architectuur
+## Architectuur van Business Central
 
 ```
-Business Central (SaaS / On-Prem / Docker)
-├── Base Application (Microsoft standard)
-├── Extensions (jouw aanpassingen — AL code)
-│   ├── Table Extensions       (extra velden op bestaande tabellen)
-│   ├── Page Extensions        (extra UI op bestaande pagina's)
-│   ├── Report Extensions      (aanpassingen op rapporten)
-│   └── Codeunit Extensions    (aanpassingen op business logic)
-├── Integraties
-│   ├── API Pages → REST API voor externe systemen
-│   ├── Web Services (OData / SOAP legacy)
-│   └── Azure Service Bus / Logic Apps
-└── Microsoft 365
-    ├── Teams integratie
-    ├── Outlook Add-in
-    └── Power BI rapportage
+┌─────────────────────────────────────────────────────────────────┐
+│                  BUSINESS CENTRAL                               │
+│                                                                 │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐           │
+│  │  Financiën  │  │   Verkoop   │  │   Inkoop    │           │
+│  │  G/L, BTW  │  │  Offertes   │  │  Bestellingen│           │
+│  │  Rapporten  │  │  Orders     │  │  Leveranciers│           │
+│  └─────────────┘  └─────────────┘  └─────────────┘           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐           │
+│  │  Voorraad   │  │  Productie  │  │  Projecten  │           │
+│  │  Artikelen  │  │  BOM        │  │  Resources  │           │
+│  │  Locaties   │  │  Capaciteit │  │  Tijdschrijven│         │
+│  └─────────────┘  └─────────────┘  └─────────────┘           │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │               BASE APPLICATION                          │   │
+│  │           (Microsoft code — niet aanpassen)             │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              EXTENSIONS (jouw AL code)                  │   │
+│  │  Extra velden · Extra pagina's · Business logic         │   │
+│  │  Integraties · Rapporten · API's                        │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+
+Integraties:
+  Power BI ──────────────────────── Rapportage
+  Power Automate ────────────────── Workflows en automatisering
+  WACS (WMS) ────────────────────── Voorraadsynchronisatie
+  TAS (TMS) ─────────────────────── Factuurdata transport
+  Azure ──────────────────────────── Key Vault, Service Bus
+  Teams/Outlook ──────────────────── Notificaties
 ```
 
 ---
 
 ## AL — Application Language
 
-### Table Extension
+**AL** is de programmeertaal van Business Central. Het lijkt op Pascal/Delphi en is sterk getypeerd. Elke aanpassing op BC schrijf je als een **Extension** — een los pakketje code dat bovenop de base application geïnstalleerd wordt.
+
+### Voordelen van Extensions
+
+- Jouw code raakt de base application niet → Microsoft-updates overschrijven niets
+- Herbruikbaar: één extension kan op meerdere BC-instanties geïnstalleerd worden
+- Versiebaar: code in Git, deploybaar via pipeline
+- Testbaar: AL heeft een ingebouwd test-framework
+
+### Objectnummering
+
+```
+Microsoft reserved:   1 - 49.999
+Partner-licentie:     50.000 - 99.999    ← gebruik jij dit
+Test/experimenteel:   100.000+
+
+Elke tabel, pagina, codeunit, rapport krijgt een uniek nummer
+```
+
+---
+
+## Table Extension — Extra velden toevoegen
 
 ```al
-tableextension 50100 "Ext. Customer" extends Customer
+// Voeg extra velden toe aan de bestaande Customer tabel
+// Regel: gebruik NOOIT een Table Extension om de structuur te breken
+// Voeg toe, pas niet aan
+tableextension 50100 "Extended Customer" extends Customer
 {
     fields
     {
-        field(50100; "Customer Category"; Enum "Customer Category")
+        // Veld 50100: Klantsegment voor CRM en rapportage
+        field(50100; "Customer Segment"; Enum "Customer Segment")
         {
-            Caption = 'Customer Category';
+            Caption = 'Customer Segment';
             DataClassification = CustomerContent;
+            // Tooltip verschijnt als gebruiker hovert over het veld
+            ToolTip = 'Geeft het strategische segment van de klant aan (A, B of C).';
         }
-        field(50101; "External Reference"; Code[30])
+
+        // Veld 50101: Externe referentie voor integratie met WMS
+        field(50101; "WMS Customer Code"; Code[20])
         {
-            Caption = 'External Reference';
+            Caption = 'WMS Klantcode';
             DataClassification = CustomerContent;
+            ToolTip = 'De klantcode zoals gebruikt in het Warehouse Management System (WACS).';
         }
-        field(50102; "Last Sync Date"; DateTime)
+
+        // Veld 50102: Bijhouden wanneer de klant voor het laatste gesynchroniseerd is
+        field(50102; "Last WMS Sync"; DateTime)
         {
-            Caption = 'Last Sync Date';
+            Caption = 'Laatste WMS Synchronisatie';
+            DataClassification = SystemMetadata;
+            Editable = false;  // Alleen leesbaar — wordt ingesteld door de code
+        }
+
+        // Veld 50103: Vlag of de klant gesynchroniseerd moet worden
+        field(50103; "Pending WMS Sync"; Boolean)
+        {
+            Caption = 'WMS Sync Vereist';
             DataClassification = SystemMetadata;
         }
     }
+
+    // Triggers: reageer op gebeurtenissen in de tabel
+    trigger OnAfterModify()
+    var
+        WMSSyncMgt: Codeunit "WMS Sync Management";
+    begin
+        // Markeer als te synchroniseren als naam of adres veranderd is
+        if xRec.Name <> Rec.Name
+           or xRec.Address <> Rec.Address
+           or xRec.City <> Rec.City then
+        begin
+            Rec."Pending WMS Sync" := true;
+            Rec.Modify();
+        end;
+    end;
 }
 
-enum 50100 "Customer Category"
+// Enum voor klantsegmenten
+enum 50100 "Customer Segment"
 {
     Extensible = true;
 
     value(0; " ") { Caption = ' '; }
-    value(1; "A") { Caption = 'A - Strategisch'; }
-    value(2; "B") { Caption = 'B - Standaard'; }
-    value(3; "C") { Caption = 'C - Occasioneel'; }
+    value(1; "A") { Caption = 'A — Strategisch (Top klanten)'; }
+    value(2; "B") { Caption = 'B — Standaard'; }
+    value(3; "C") { Caption = 'C — Occasioneel'; }
 }
 ```
 
-### Page Extension
+---
+
+## Page Extension — Extra UI bouwen
 
 ```al
-pageextension 50100 "Ext. Customer Card" extends "Customer Card"
+pageextension 50100 "Extended Customer Card" extends "Customer Card"
 {
     layout
     {
+        // Voeg velden toe na het Name veld
         addafter(Name)
         {
-            field("Customer Category"; Rec."Customer Category")
+            field("Customer Segment"; Rec."Customer Segment")
             {
                 ApplicationArea = All;
-                ToolTip = 'Geeft de categorie van de klant aan.';
+                Importance = Promoted;  // Toont in de header (boven de tabs)
             }
-            field("External Reference"; Rec."External Reference")
+        }
+
+        // Voeg een nieuwe groep toe op het General tab
+        addlast(General)
+        {
+            group("WMS Integration")
             {
-                ApplicationArea = All;
-                ToolTip = 'Externe referentie voor integraties.';
+                Caption = 'WMS Integratie';
+
+                field("WMS Customer Code"; Rec."WMS Customer Code")
+                {
+                    ApplicationArea = All;
+                }
+                field("Last WMS Sync"; Rec."Last WMS Sync")
+                {
+                    ApplicationArea = All;
+                }
+                field("Pending WMS Sync"; Rec."Pending WMS Sync")
+                {
+                    ApplicationArea = All;
+                    Style = Unfavorable;  // Rood als true
+                    StyleExpr = Rec."Pending WMS Sync";
+                }
             }
         }
     }
 
     actions
     {
+        // Voeg actie toe aan de "Process" action group
         addlast(processing)
         {
-            action("Sync to WMS")
+            action("Sync to WMS Now")
             {
                 ApplicationArea = All;
-                Caption = 'Synchroniseer naar WMS';
+                Caption = 'Nu synchroniseren naar WMS';
+                ToolTip = 'Stuurt de klantgegevens direct naar het Warehouse Management System.';
                 Image = TransmitElectronic;
-                ToolTip = 'Stuur klantgegevens naar het Warehouse Management System.';
+                Promoted = true;
+                PromotedCategory = Process;
+                PromotedIsBig = true;
 
                 trigger OnAction()
                 var
                     WMSSyncMgt: Codeunit "WMS Sync Management";
                 begin
-                    WMSSyncMgt.SyncCustomer(Rec);
-                    Message('Klant succesvol gesynchroniseerd naar WMS.');
+                    WMSSyncMgt.SyncCustomerToWMS(Rec);
+                    Message('Klant "%1" succesvol gesynchroniseerd naar WMS.', Rec.Name);
+                end;
+            }
+
+            action("View WMS Sync Log")
+            {
+                ApplicationArea = All;
+                Caption = 'Synchronisatielogboek bekijken';
+                Image = Log;
+
+                trigger OnAction()
+                var
+                    SyncLog: Record "WMS Sync Log";
+                begin
+                    SyncLog.SetRange("Record Type", SyncLog."Record Type"::Customer);
+                    SyncLog.SetRange("Record ID", Rec."No.");
+                    Page.Run(Page::"WMS Sync Log", SyncLog);
                 end;
             }
         }
@@ -112,34 +243,101 @@ pageextension 50100 "Ext. Customer Card" extends "Customer Card"
 }
 ```
 
-### Codeunit — Business Logic
+---
+
+## Codeunit — Business Logica
 
 ```al
 codeunit 50100 "WMS Sync Management"
 {
-    procedure SyncCustomer(Customer: Record Customer)
+    // Synchroniseer één klant naar het WMS
+    procedure SyncCustomerToWMS(var Customer: Record Customer)
     var
+        WMSSetup: Record "WMS Integration Setup";
         HttpClient: HttpClient;
         HttpContent: HttpContent;
         HttpResponse: HttpResponseMessage;
-        JsonPayload: Text;
-        WMSApiUrl: Text;
+        JsonBody: Text;
+        ErrorText: Text;
     begin
-        WMSApiUrl := GetSetup().WMSEndpoint + '/api/customers';
-        JsonPayload := BuildCustomerJson(Customer);
+        // Haal de integratie-instellingen op
+        WMSSetup.Get();
 
-        HttpContent.WriteFrom(JsonPayload);
+        if WMSSetup."WMS Endpoint" = '' then
+            Error('WMS endpoint is niet geconfigureerd. Ga naar WMS Integratie Setup.');
+
+        // Bouw de JSON payload
+        JsonBody := BuildCustomerJson(Customer);
+
+        // Stel de HTTP request in
+        HttpContent.WriteFrom(JsonBody);
+        HttpContent.GetHeaders().Remove('Content-Type');
         HttpContent.GetHeaders().Add('Content-Type', 'application/json');
-        HttpContent.GetHeaders().Add('Authorization', 'Bearer ' + GetSetup().WMSApiKey);
 
-        if not HttpClient.Post(WMSApiUrl, HttpContent, HttpResponse) then
-            Error('Verbinding met WMS mislukt. Controleer de netwerkinstellingen.');
+        HttpClient.DefaultRequestHeaders().Add(
+            'Authorization',
+            'Bearer ' + WMSSetup."API Token");
 
-        if not HttpResponse.IsSuccessStatusCode then
-            Error('WMS synchronisatie gefaald: %1', HttpResponse.ReasonPhrase);
+        HttpClient.DefaultRequestHeaders().Add(
+            'X-Source-System', 'BusinessCentral');
 
-        Customer."Last Sync Date" := CurrentDateTime;
+        // Verstuur de request
+        if not HttpClient.Post(
+            WMSSetup."WMS Endpoint" + '/api/customers',
+            HttpContent,
+            HttpResponse)
+        then
+            Error('Verbinding met WMS mislukt. Controleer de WMS Endpoint configuratie.');
+
+        // Verwerk het antwoord
+        if not HttpResponse.IsSuccessStatusCode then begin
+            HttpResponse.Content.ReadAs(ErrorText);
+            Error('WMS synchronisatie gefaald (HTTP %1): %2',
+                HttpResponse.HttpStatusCode, ErrorText);
+        end;
+
+        // Bijwerken in BC
+        Customer."Last WMS Sync" := CurrentDateTime;
+        Customer."Pending WMS Sync" := false;
         Customer.Modify();
+
+        // Log de synchronisatie
+        LogSyncSuccess(Customer."No.", 'Customer');
+    end;
+
+    // Synchroniseer alle klanten met openstaande sync
+    procedure SyncAllPendingCustomers(): Integer
+    var
+        Customer: Record Customer;
+        SyncCount: Integer;
+        ErrorCount: Integer;
+    begin
+        Customer.SetRange("Pending WMS Sync", true);
+        Customer.SetRange(Blocked, Customer.Blocked::" ");
+
+        if not Customer.FindSet() then
+            exit(0);
+
+        repeat
+            if not TrySyncCustomerToWMS(Customer) then
+                ErrorCount += 1
+            else
+                SyncCount += 1;
+        until Customer.Next() = 0;
+
+        if ErrorCount > 0 then
+            Message('%1 klanten gesynchroniseerd, %2 fouten. Zie het synchronisatielogboek.',
+                SyncCount, ErrorCount)
+        else
+            Message('%1 klanten succesvol gesynchroniseerd.', SyncCount);
+
+        exit(SyncCount);
+    end;
+
+    [TryFunction]
+    local procedure TrySyncCustomerToWMS(var Customer: Record Customer)
+    begin
+        SyncCustomerToWMS(Customer);
     end;
 
     local procedure BuildCustomerJson(Customer: Record Customer): Text
@@ -150,36 +348,51 @@ codeunit 50100 "WMS Sync Management"
         Json.Add('externalId', Customer."No.");
         Json.Add('name', Customer.Name);
         Json.Add('address', Customer.Address);
+        Json.Add('address2', Customer."Address 2");
+        Json.Add('postalCode', Customer."Post Code");
         Json.Add('city', Customer.City);
-        Json.Add('country', Customer."Country/Region Code");
-        Json.Add('category', Format(Customer."Customer Category"));
+        Json.Add('countryCode', Customer."Country/Region Code");
+        Json.Add('vatNumber', Customer."VAT Registration No.");
+        Json.Add('segment', Format(Customer."Customer Segment"));
+        Json.Add('isActive', Customer.Blocked = Customer.Blocked::" ");
         Json.WriteToText(JsonText);
         exit(JsonText);
     end;
 
-    local procedure GetSetup(): Record "WMS Integration Setup"
+    local procedure LogSyncSuccess(RecordId: Code[20]; RecordType: Text)
     var
-        Setup: Record "WMS Integration Setup";
+        SyncLog: Record "WMS Sync Log";
     begin
-        Setup.Get();
-        exit(Setup);
+        SyncLog.Init();
+        SyncLog."Entry No." := 0;
+        SyncLog."Record Type" := RecordType;
+        SyncLog."Record ID" := RecordId;
+        SyncLog.Status := SyncLog.Status::Success;
+        SyncLog."Logged At" := CurrentDateTime;
+        SyncLog.Insert();
     end;
 }
 ```
 
 ---
 
-## API Pages — REST API blootstellen
+## API Pages — BC als REST API
+
+BC kan data blootstellen als een REST API. Andere systemen (WACS, TAS, Angular app) kunnen dan rechtstreeks met BC communiceren.
 
 ```al
 page 50110 "Customer API"
 {
     PageType = API;
+
+    // De API URL wordt:
+    // GET /api/mycompany/wms/v1.0/companies({companyId})/customers
     APIPublisher = 'mycompany';
-    APIGroup = 'integration';
+    APIGroup = 'wms';
     APIVersion = 'v1.0';
     EntitySetName = 'customers';
     EntityName = 'customer';
+
     SourceTable = Customer;
     ODataKeyFields = SystemId;
     DelayedInsert = true;
@@ -190,93 +403,223 @@ page 50110 "Customer API"
         {
             repeater(Group)
             {
-                field(id; Rec.SystemId) { }
-                field(number; Rec."No.") { }
-                field(name; Rec.Name) { }
-                field(city; Rec.City) { }
-                field(country; Rec."Country/Region Code") { }
-                field(category; Rec."Customer Category") { }
-                field(lastSyncDate; Rec."Last Sync Date") { }
+                field(id; Rec.SystemId)
+                { Caption = 'id'; }
+
+                field(number; Rec."No.")
+                { Caption = 'number'; }
+
+                field(name; Rec.Name)
+                { Caption = 'name'; }
+
+                field(address; Rec.Address)
+                { Caption = 'address'; }
+
+                field(city; Rec.City)
+                { Caption = 'city'; }
+
+                field(countryCode; Rec."Country/Region Code")
+                { Caption = 'countryCode'; }
+
+                field(segment; Rec."Customer Segment")
+                { Caption = 'segment'; }
+
+                field(wmsCustomerCode; Rec."WMS Customer Code")
+                { Caption = 'wmsCustomerCode'; }
+
+                field(isBlocked; Rec.Blocked)
+                { Caption = 'isBlocked'; }
             }
         }
     }
-}
 
-// Aanroepen:
-// GET /api/mycompany/integration/v1.0/companies({id})/customers
-// POST /api/mycompany/integration/v1.0/companies({id})/customers
+    // Aanroepen vanuit .NET:
+    // GET /api/mycompany/wms/v1.0/companies(abc-123)/customers
+    // GET /api/mycompany/wms/v1.0/companies(abc-123)/customers?$filter=segment eq 'A'
+    // POST /api/mycompany/wms/v1.0/companies(abc-123)/customers
+    // PATCH /api/mycompany/wms/v1.0/companies(abc-123)/customers(guid)
+}
+```
+
+### BC API aanroepen vanuit .NET
+
+```csharp
+public class BusinessCentralClient : IBusinessCentralClient
+{
+    private readonly HttpClient _http;
+    private readonly IOptions<BCSettings> _settings;
+
+    public BusinessCentralClient(HttpClient http, IOptions<BCSettings> settings)
+    {
+        _http = http;
+        _settings = settings;
+    }
+
+    public async Task<List<BCCustomerDto>> GetCustomersAsync(string? segmentFilter = null)
+    {
+        var url = $"{_settings.Value.BaseUrl}/api/mycompany/wms/v1.0" +
+                  $"/companies({_settings.Value.CompanyId})/customers";
+
+        if (segmentFilter is not null)
+            url += $"?$filter=segment eq '{segmentFilter}'";
+
+        var response = await _http.GetFromJsonAsync<BCODataResult<BCCustomerDto>>(url);
+        return response?.Value ?? [];
+    }
+
+    public async Task<int> CreateSalesOrderAsync(BCSalesOrderCommand command)
+    {
+        var url = $"{_settings.Value.BaseUrl}/api/v2.0" +
+                  $"/companies({_settings.Value.CompanyId})/salesOrders";
+
+        var response = await _http.PostAsJsonAsync(url, command);
+        response.EnsureSuccessStatusCode();
+
+        var created = await response.Content.ReadFromJsonAsync<BCSalesOrderDto>();
+        return created!.Number;
+    }
+
+    // Voorraadmutatie doorsturen naar BC (na picking in WACS)
+    public async Task PostItemJournalAsync(BCItemJournalLine line)
+    {
+        var url = $"{_settings.Value.BaseUrl}/api/v2.0" +
+                  $"/companies({_settings.Value.CompanyId})/itemJournalLines";
+
+        var response = await _http.PostAsJsonAsync(url, line);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            throw new BCIntegrationException(
+                $"Voorraadmutatie gefaald (HTTP {response.StatusCode}): {error}");
+        }
+    }
+}
 ```
 
 ---
 
-## Events & Subscribers
+## Events — Loose koppeling via Publisher/Subscriber
 
-Business Central werkt met een **Publisher/Subscriber** patroon voor clean extensies:
+Het event-systeem van BC laat toe dat extensies op elkaar reageren zonder directe afhankelijkheden:
 
 ```al
-// Publisher (in base app of jouw extension)
-codeunit 50200 "Order Events"
+// In jouw extensie: definieer een event dat anderen kunnen subscriben
+codeunit 50200 "WMS Integration Events"
 {
+    // IntegrationEvent: andere extensies kunnen hierop subscriben
     [IntegrationEvent(false, false)]
-    procedure OnAfterOrderPosted(var SalesInvoiceHeader: Record "Sales Invoice Header")
+    procedure OnBeforeCustomerSyncToWMS(
+        var Customer: Record Customer;
+        var ShouldSync: Boolean)
+    begin
+        // Lege body — implementatie gebeurt door subscribers
+    end;
+
+    [IntegrationEvent(false, false)]
+    procedure OnAfterCustomerSyncToWMS(
+        var Customer: Record Customer;
+        Success: Boolean;
+        ErrorMessage: Text)
     begin
     end;
 }
 
-// Subscriber (in een andere extension — losse koppeling)
-codeunit 50201 "Order Posted Subscriber"
+// In een ANDERE extensie: subscribe op het event
+// Geen directe koppeling — de publisher weet niet dat deze subscriber bestaat
+codeunit 50301 "Custom Sync Validator"
 {
-    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Order Events",
-        'OnAfterOrderPosted', '', false, false)]
-    local procedure HandleOrderPosted(var SalesInvoiceHeader: Record "Sales Invoice Header")
-    var
-        WMSSyncMgt: Codeunit "WMS Sync Management";
+    [EventSubscriber(
+        ObjectType::Codeunit,
+        Codeunit::"WMS Integration Events",
+        'OnBeforeCustomerSyncToWMS',
+        '',
+        false,
+        false)]
+    local procedure ValidateBeforeSync(
+        var Customer: Record Customer;
+        var ShouldSync: Boolean)
     begin
-        WMSSyncMgt.NotifyWMSOrderPosted(SalesInvoiceHeader);
+        // Blokkeer sync als WMS Customer Code niet ingevuld is
+        if Customer."WMS Customer Code" = '' then begin
+            ShouldSync := false;
+            Message('Klant "%1" heeft geen WMS Klantcode. Synchronisatie overgeslagen.', Customer.Name);
+        end;
+
+        // Blokkeer sync voor geblokkeerde klanten
+        if Customer.Blocked <> Customer.Blocked::" " then
+            ShouldSync := false;
     end;
 }
 ```
 
 ---
 
-## Integratiepaden
-
-| Richting | Technologie | Gebruik |
-|----------|-------------|---------|
-| BC → Extern | API Page (OData) | Externe app leest BC data |
-| Extern → BC | API Page (POST/PATCH) | Externe app schrijft naar BC |
-| BC → Extern (event) | Azure Service Bus via AL | BC stuurt events bij wijzigingen |
-| Extern → BC (batch) | Azure Logic Apps | Periodieke synchronisaties |
-| BC → Power BI | OData feed | Rapportage en dashboards |
-
----
-
-## Extension Lifecycle
+## Extension Lifecycle — Van Code naar Productie
 
 ```bash
-# Ontwikkelen
-code .           # VS Code met AL Language extension
-al: download symbols    # Symbolen ophalen van BC server
-F5               # Publiceer en debug in sandbox
+# ─── 1. ONTWIKKELOMGEVING ───────────────────────────────────────────────
+# VS Code met AL Language extension
+code .
 
-# Builden
-al: build        # Genereert .app bestand
+# In VS Code:
+# F1 → "AL: Download Symbols" → haalt BC objectdefinities op
+# F5 → Publiceert de extension naar sandbox en opent BC
 
-# Deployen
-# Via Business Central Admin Center of:
-az storage blob upload --file MyExtension_1.0.0.0.app ...
+# ─── 2. TESTEN ─────────────────────────────────────────────────────────
+# AL Test Codeunits
+codeunit 50900 "Customer Sync Tests"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure TestSyncCustomerWithValidData()
+    var
+        Customer: Record Customer;
+        WMSSyncMgt: Codeunit "WMS Sync Management";
+        HttpMock: Codeunit "Http Mock";
+    begin
+        // Arrange
+        HttpMock.SetupSuccess('{"id": "CUST-001"}');
+        CreateTestCustomer(Customer, 'CUST-001', 'Test Klant BV', 'WMS001');
+
+        // Act
+        WMSSyncMgt.SyncCustomerToWMS(Customer);
+
+        // Assert
+        Customer.Find('=');
+        Assert.IsTrue(Customer."Last WMS Sync" > 0DT, 'Last WMS Sync moet ingesteld zijn');
+        Assert.IsFalse(Customer."Pending WMS Sync", 'Pending WMS Sync moet false zijn');
+    end;
+}
+
+# ─── 3. BUILDEN ─────────────────────────────────────────────────────────
+# F1 → "AL: Package" → genereert MyExtension_1.0.0.0.app
+
+# ─── 4. DEPLOYEN VIA AZURE DEVOPS ──────────────────────────────────────
+# In azure-pipelines.yml:
+- task: ALOpsAppPublish@1
+  inputs:
+    usedocker: false
+    nav_serverinstance: 'BC Production'
+    artifact_path: '$(Build.ArtifactStagingDirectory)/*.app'
+
+# ─── 5. OF VIA BC ADMIN CENTER ──────────────────────────────────────────
+# apps.businesscentral.dynamics.com → Extensions → Upload Extension
 ```
 
 ---
 
-## Best Practices
+## Veelgemaakte fouten in AL
 
-- Gebruik **objectrange** boven 50000 voor eigen objecten (per licentieafspraak)
-- Nooit `Codeunit.Run` met globale variabelen — geef parameters door
-- Gebruik **SetRange / SetFilter** voor queries — nooit loop + if
-- Schrijf events op kritische punten zodat andere extensies kunnen subscriben
-- Test altijd in een **sandbox** of **Docker container** voor acceptatie
-- Gebruik **AppSourceCop** en **PerTenantExtensionCop** linting
+| Fout | Probleem | Oplossing |
+|------|---------|-----------|
+| `Rec.Modify()` zonder `Rec.Find()` | Databasefout: record niet gevonden | Altijd `Find()` voor `Modify()` |
+| Loop met `FindFirst()` | Verwerkt alleen het eerste record | Gebruik `FindSet()` + `repeat/until` |
+| `SetRange` na `FindSet()` | Filter wordt genegeerd | Altijd filter voor de FindSet |
+| Globale variabelen misbruiken | Thread-safety issues | Gebruik parameters en lokale vars |
+| HTTP call in een transactie | Kan tot problemen leiden | Gebruik `Commit()` voor externe calls |
+| Hardgecodeerde endpoints | Werkt niet in andere omgevingen | Gebruik Setup tabellen |
 
 ---
 

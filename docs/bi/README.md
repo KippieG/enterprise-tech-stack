@@ -1,231 +1,563 @@
 # BI — Power BI · T-SQL · Excel
 
-## Overzicht
+## Wat is Business Intelligence?
 
-Business Intelligence verbindt ruwe data met zakelijke beslissingen. Power BI is de rapportage- en visualisatietool van Microsoft, T-SQL levert de data aan, en Excel is de universele tool voor ad-hoc analyse.
+**Business Intelligence (BI)** is het omzetten van ruwe data in bruikbare inzichten voor beslissingen. Het gaat over vragen beantwoorden als:
+- Welke klanten groeien het snelst?
+- Waar verliezen we geld?
+- Is onze levering op tijd?
+- Welke producten verkopen slecht in welke regio?
 
----
-
-## Power BI
-
-### Architectuur
-
-```
-Databron (SQL Server)
-    ↓
-Power Query (M) — data transformeren & opschonen
-    ↓
-Data Model (tabellen + relaties)
-    ↓
-DAX (berekeningen & measures)
-    ↓
-Visuals (grafieken, tabellen, kaarten)
-    ↓
-Rapport → Dashboard → Power BI Service → Teams/SharePoint
-```
-
-### Data Model best practices
-
-- **Star schema**: feitentabellen in het midden, dimensietabellen rondom
-- Gebruik **surrogate keys** (INT) als join-sleutels, niet business keys
-- Zet **datum-dimensie** apart — nooit `OrderDate` direct op as
-
-```
-DimDate ──────┐
-DimCustomer ──┤── FactOrders ──┬── DimProduct
-DimEmployee ──┘                └── DimWarehouse
-```
+De **Microsoft BI stack** bestaat uit drie lagen:
+1. **SQL Server / T-SQL** — de databron: ruwe data opslaan en voorbereiden
+2. **Power Query** — data ophalen, transformeren en opschonen
+3. **Power BI** — data visualiseren in dashboards en rapporten
 
 ---
 
-## DAX — Data Analysis Expressions
+## Architectuur — Van Data naar Dashboard
 
-### Basismaatregelen
-
-```dax
--- Totale omzet
-Total Revenue = SUMX(FactOrders, FactOrders[Quantity] * FactOrders[UnitPrice])
-
--- Aantal unieke klanten
-Unique Customers = DISTINCTCOUNT(FactOrders[CustomerId])
-
--- Gemiddelde orderwaarde
-Avg Order Value = DIVIDE([Total Revenue], [Order Count])
+```
+┌─────────────────────────────────────────────────────────┐
+│                  DATABRONNEN                            │
+│  SQL Server · Business Central · Excel · SharePoint     │
+│  Web API's · Azure SQL · On-prem bestanden              │
+└──────────────────────┬──────────────────────────────────┘
+                       │ Laden
+┌──────────────────────▼──────────────────────────────────┐
+│              POWER QUERY (ETL)                          │
+│  Extraheren → Transformeren → Laden                     │
+│  Opschonen, filteren, samenvoegen, hernoemen            │
+└──────────────────────┬──────────────────────────────────┘
+                       │ Modeleren
+┌──────────────────────▼──────────────────────────────────┐
+│               DATA MODEL (Star Schema)                  │
+│  Feitentabellen ↔ Dimensietabellen                     │
+│  Relaties definiëren                                    │
+└──────────────────────┬──────────────────────────────────┘
+                       │ Berekenen
+┌──────────────────────▼──────────────────────────────────┐
+│                  DAX MEASURES                           │
+│  KPI's · Groeicijfers · Tijdsintelligentie              │
+└──────────────────────┬──────────────────────────────────┘
+                       │ Visualiseren
+┌──────────────────────▼──────────────────────────────────┐
+│                 POWER BI RAPPORT                        │
+│  Grafieken · Tabellen · Kaarten · Slicers               │
+└──────────────────────┬──────────────────────────────────┘
+                       │ Publiceren
+┌──────────────────────▼──────────────────────────────────┐
+│              POWER BI SERVICE (Cloud)                   │
+│  Dashboards · Automatisch vernieuwen · Delen            │
+│  Teams · SharePoint · Mobile app                        │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Tijdsintelligentie
+---
 
-```dax
--- Omzet vorig jaar (zelfde periode)
-Revenue PY = CALCULATE([Total Revenue], SAMEPERIODLASTYEAR(DimDate[Date]))
+## Het Star Schema — De basis van elk goed data model
 
--- Groei t.o.v. vorig jaar %
-YoY Growth % = DIVIDE([Total Revenue] - [Revenue PY], [Revenue PY])
+Een **star schema** organiseert data in:
+- **Feitentabel** (Fact): de meetbare feiten — verkoopbedragen, aantallen, tijdsduur
+- **Dimensietabellen** (Dimension): de context — wie, wat, waar, wanneer
 
--- Year-to-date omzet
-Revenue YTD = TOTALYTD([Total Revenue], DimDate[Date])
+Waarom een star schema?
+- Power BI is hier op geoptimaliseerd — sneller en eenvoudiger DAX
+- Duidelijke scheiding: feiten zijn cijfers, dimensies zijn beschrijvingen
+- Eenvoudig te begrijpen voor eindgebruikers
 
--- Lopende som
-Revenue Running Total =
-CALCULATE(
-    [Total Revenue],
-    FILTER(
-        ALL(DimDate),
-        DimDate[Date] <= MAX(DimDate[Date])
-    )
-)
+```
+        DimDate
+        ┌─────────────────┐
+        │ DateKey (PK)    │
+        │ Date            │
+        │ Year            │
+        │ Quarter         │
+        │ Month           │
+        │ MonthName       │
+        │ WeekNumber      │
+        │ DayName         │
+        │ IsWeekend       │
+        │ IsHoliday       │
+        └────────┬────────┘
+                 │
+DimCustomer      │               DimProduct
+┌─────────────┐  │  ┌────────────────────────┐
+│ CustomerKey │  │  │ ProductKey (PK)         │
+│ CustomerCode│  │  │ ProductCode             │
+│ Name        │  │  │ ProductName             │
+│ City        ├──┤  │ Category                │
+│ Country     │  │  │ SubCategory             │
+│ Segment     │  │  │ Brand                   │
+│ IsActive    │  │  └───────────┬─────────────┘
+└──────┬──────┘  │             │
+       │         │             │
+       └─────────▼─────────────┘
+               FactSales
+         ┌──────────────────────┐
+         │ SalesKey (PK)        │
+         │ DateKey (FK)         │
+         │ CustomerKey (FK)     │
+         │ ProductKey (FK)      │
+         │ WarehouseKey (FK)    │
+         │ Quantity             │ ← Meetbare feiten
+         │ UnitPrice            │
+         │ TotalAmount          │
+         │ CostPrice            │
+         │ GrossMargin          │
+         └──────────────────────┘
 ```
 
-### CALCULATE — het hart van DAX
+---
 
-```dax
--- Omzet alleen voor klanten in België
-Belgium Revenue =
-CALCULATE(
-    [Total Revenue],
-    DimCustomer[Country] = "Belgium"
-)
+## T-SQL voor BI — Data voorbereiden
 
--- Top 10 klanten (context filter)
-Top 10 Customers Revenue =
-CALCULATE(
-    [Total Revenue],
-    TOPN(10, DimCustomer, [Total Revenue])
-)
+Goede BI begint bij goed voorbereide data in SQL Server.
 
--- Omzet exclusief huidige filter (voor % van totaal)
-Revenue % of Total =
-DIVIDE(
-    [Total Revenue],
-    CALCULATE([Total Revenue], ALL(DimCustomer))
-)
+### Rapportageviews aanmaken
+
+```sql
+-- Maak een view die alle data voor het verkooprapport bevat
+-- Power BI verbindt direct met deze view — geen complexe queries nodig in PBI zelf
+CREATE OR ALTER VIEW vw_SalesFact AS
+SELECT
+    -- Sleutels voor het datamodel
+    CONVERT(INT, FORMAT(o.OrderDate, 'yyyyMMdd')) AS DateKey,
+    o.CustomerId AS CustomerKey,
+    ol.ProductId AS ProductKey,
+
+    -- Meetbare feiten
+    ol.Quantity,
+    ol.UnitPrice,
+    ol.Quantity * ol.UnitPrice AS TotalAmount,
+    ol.Quantity * p.CostPrice AS TotalCost,
+    (ol.Quantity * ol.UnitPrice) - (ol.Quantity * p.CostPrice) AS GrossMargin,
+
+    -- Bereken marge percentage (vermijd deling door nul)
+    CASE
+        WHEN ol.Quantity * ol.UnitPrice = 0 THEN 0
+        ELSE ROUND(
+            ((ol.Quantity * ol.UnitPrice) - (ol.Quantity * p.CostPrice)) /
+            (ol.Quantity * ol.UnitPrice) * 100, 2)
+    END AS MarginPct,
+
+    -- Extra context
+    o.OrderNumber,
+    o.Status AS OrderStatus,
+    o.OrderDate,
+    YEAR(o.OrderDate) AS OrderYear,
+    MONTH(o.OrderDate) AS OrderMonth,
+    DATEPART(QUARTER, o.OrderDate) AS OrderQuarter
+
+FROM Orders o
+INNER JOIN OrderLines ol ON ol.OrderId = o.Id
+INNER JOIN Products p ON p.Id = ol.ProductId
+WHERE o.IsDeleted = 0
+  AND o.Status NOT IN ('Draft', 'Cancelled')
+  AND ol.IsDeleted = 0;
+GO
+
+-- Datumdimensie — dit is één van de belangrijkste tabellen
+-- Maak dit EENMALIG aan en vul het voor vele jaren
+CREATE OR ALTER PROCEDURE usp_PopulateDimDate
+    @StartDate DATE = '2020-01-01',
+    @EndDate DATE = '2030-12-31'
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Date DATE = @StartDate;
+
+    WHILE @Date <= @EndDate
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM DimDate WHERE DateKey = CONVERT(INT, FORMAT(@Date, 'yyyyMMdd')))
+        BEGIN
+            INSERT INTO DimDate (
+                DateKey, [Date], [Year], Quarter, [Month], MonthName,
+                WeekNumber, DayOfWeek, DayName, IsWeekend
+            )
+            VALUES (
+                CONVERT(INT, FORMAT(@Date, 'yyyyMMdd')),
+                @Date,
+                YEAR(@Date),
+                DATEPART(QUARTER, @Date),
+                MONTH(@Date),
+                DATENAME(MONTH, @Date),
+                DATEPART(WEEK, @Date),
+                DATEPART(WEEKDAY, @Date),
+                DATENAME(WEEKDAY, @Date),
+                CASE WHEN DATEPART(WEEKDAY, @Date) IN (1, 7) THEN 1 ELSE 0 END
+            );
+        END
+
+        SET @Date = DATEADD(DAY, 1, @Date);
+    END;
+END;
 ```
 
 ---
 
 ## Power Query (M) — Data Transformatie
 
+Power Query is de ETL-laag in Power BI. Hier haal je data op, schoon je het op en bereid je het voor.
+
 ```m
-// Voorbeeld: orders ophalen, opschonen en transformeren
+// Volledig Power Query voorbeeld: orders laden en transformeren
 let
-    Source = Sql.Database("myserver", "MyDB"),
-    Orders = Source{[Schema="dbo", Item="Orders"]}[Data],
+    // ─── STAP 1: VERBINDEN MET SQL SERVER ────────────────────────────
+    Source = Sql.Database("myserver.database.windows.net", "MyAppDB",
+        [Query="SELECT * FROM vw_SalesFact"]),
 
-    // Filter op actieve orders
-    ActiveOrders = Table.SelectRows(Orders, each [IsDeleted] = false),
-
-    // Kolommen selecteren
-    Selected = Table.SelectColumns(ActiveOrders,
-        {"Id", "OrderNumber", "OrderDate", "CustomerId", "TotalAmount", "Status"}),
-
-    // Type instellen
-    Typed = Table.TransformColumnTypes(Selected, {
-        {"Id", Int64.Type},
+    // ─── STAP 2: TYPES INSTELLEN ─────────────────────────────────────
+    TypedData = Table.TransformColumnTypes(Source, {
+        {"DateKey", Int64.Type},
         {"OrderDate", type date},
-        {"TotalAmount", Currency.Type}
+        {"TotalAmount", Currency.Type},
+        {"GrossMargin", Currency.Type},
+        {"MarginPct", Percentage.Type},
+        {"Quantity", Int64.Type}
     }),
 
-    // Berekende kolom toevoegen
-    WithMonth = Table.AddColumn(Typed, "OrderMonth",
-        each Date.ToText([OrderDate], "yyyy-MM"), type text)
+    // ─── STAP 3: FILTEREN ────────────────────────────────────────────
+    // Verwijder extreme uitschieters (bijv. testorders)
+    FilteredData = Table.SelectRows(TypedData,
+        each [TotalAmount] >= 0 and [TotalAmount] < 1000000),
+
+    // ─── STAP 4: KOLOMMEN HERNOEMEN ──────────────────────────────────
+    RenamedColumns = Table.RenameColumns(FilteredData, {
+        {"TotalAmount", "Omzet"},
+        {"GrossMargin", "Bruto Marge"},
+        {"MarginPct", "Marge %"}
+    }),
+
+    // ─── STAP 5: BEREKENDE KOLOMMEN TOEVOEGEN ────────────────────────
+    WithQuarterLabel = Table.AddColumn(RenamedColumns, "Kwartaal Label",
+        each "K" & Text.From([OrderQuarter]) & " " & Text.From([OrderYear]),
+        type text),
+
+    // ─── STAP 6: ONNODIGE KOLOMMEN VERWIJDEREN ───────────────────────
+    FinalData = Table.RemoveColumns(WithQuarterLabel, {"OrderNumber"})
+
 in
-    WithMonth
+    FinalData
+
+// ─── EXCEL BESTAND LADEN ─────────────────────────────────────────────────
+let
+    Source = Excel.Workbook(
+        File.Contents("\\server\share\budgets\Budget_2026.xlsx"),
+        null, true
+    ),
+    BudgetSheet = Source{[Item="Budget", Kind="Sheet"]}[Data],
+
+    // Verwijder lege rijen
+    RemovedBlanks = Table.SelectRows(BudgetSheet,
+        each not List.IsEmpty(List.RemoveMatchingItems(Record.FieldValues(_), {null, ""}))),
+
+    // Eerste rij als koptekst gebruiken
+    Headers = Table.PromoteHeaders(RemovedBlanks, [PromoteAllScalars=true]),
+
+    // Unpivot maanden (van kolommen naar rijen)
+    UnpivotedMonths = Table.UnpivotOtherColumns(Headers,
+        {"Afdeling", "Kostenplaats"},
+        "Maand", "Budget")
+in
+    UnpivotedMonths
 ```
 
 ---
 
-## T-SQL voor BI & Rapportage
+## DAX — Data Analysis Expressions
 
-### Rapportage views
+**DAX** is de formule-taal van Power BI. Je gebruikt het om maatregelen (measures) en berekende kolommen te maken.
 
-```sql
--- Maak een view die de BI-tool rechtstreeks kan aanroepen
-CREATE OR ALTER VIEW vw_SalesReport AS
-SELECT
-    o.Id AS OrderId,
-    o.OrderNumber,
-    CAST(o.OrderDate AS DATE) AS OrderDate,
-    YEAR(o.OrderDate) AS OrderYear,
-    MONTH(o.OrderDate) AS OrderMonth,
-    DATENAME(MONTH, o.OrderDate) AS MonthName,
-    DATEPART(QUARTER, o.OrderDate) AS OrderQuarter,
-    c.Name AS CustomerName,
-    c.Country,
-    c.Segment AS CustomerSegment,
-    p.ProductCode,
-    p.ProductName,
-    p.Category,
-    ol.Quantity,
-    ol.UnitPrice,
-    ol.Quantity * ol.UnitPrice AS LineAmount,
-    o.Status
-FROM Orders o
-INNER JOIN Customers c ON c.Id = o.CustomerId
-INNER JOIN OrderLines ol ON ol.OrderId = o.Id
-INNER JOIN Products p ON p.Id = ol.ProductId
-WHERE o.IsDeleted = 0
-  AND c.IsDeleted = 0;
-GO
+### Basismaatregelen
+
+```dax
+// ─── BASISAGGREGATIES ─────────────────────────────────────────────────
+
+Totale Omzet = SUM(FactSales[TotalAmount])
+
+Totaal Aantal Orders = DISTINCTCOUNT(FactSales[OrderNumber])
+
+Aantal Klanten = DISTINCTCOUNT(FactSales[CustomerKey])
+
+Gem. Orderwaarde =
+DIVIDE(
+    [Totale Omzet],
+    [Totaal Aantal Orders],
+    0  // Returneer 0 bij deling door nul (niet leeg)
+)
+
+Bruto Marge % =
+DIVIDE(
+    SUM(FactSales[GrossMargin]),
+    SUM(FactSales[TotalAmount]),
+    0
+)
 ```
 
-### Pivot voor rapportage
+### CALCULATE — Het machtigste DAX woord
 
-```sql
--- Omzet per maand per regio — gepivot
-SELECT *
-FROM (
-    SELECT
-        YEAR(OrderDate) AS Year,
-        DATENAME(MONTH, OrderDate) AS Month,
-        c.Region,
-        ol.Quantity * ol.UnitPrice AS Amount
-    FROM Orders o
-    INNER JOIN OrderLines ol ON ol.OrderId = o.Id
-    INNER JOIN Customers c ON c.Id = o.CustomerId
-) AS SourceData
-PIVOT (
-    SUM(Amount)
-    FOR Region IN ([Noord], [Oost], [Zuid], [West])
-) AS PivotTable
-ORDER BY Year, Month;
+`CALCULATE` evalueert een expressie in een **gewijzigde filtercontext**. Dit is het fundament van bijna alle geavanceerde DAX.
+
+```dax
+// Omzet alleen voor België (ongeacht wat de gebruiker gefilterd heeft)
+Omzet België =
+CALCULATE(
+    [Totale Omzet],
+    DimCustomer[Country] = "Belgium"
+)
+
+// Omzet excl. geannuleerde orders
+Omzet Excl. Annulaties =
+CALCULATE(
+    [Totale Omzet],
+    FactSales[OrderStatus] <> "Cancelled"
+)
+
+// Omzet als % van het totaal (ALL verwijdert alle filters op die tabel)
+Omzet % van Totaal =
+DIVIDE(
+    [Totale Omzet],
+    CALCULATE([Totale Omzet], ALL(DimCustomer))
+)
+
+// Omzet voor top 10 klanten
+Top 10 Klanten Omzet =
+CALCULATE(
+    [Totale Omzet],
+    TOPN(10, DimCustomer, [Totale Omzet], DESC)
+)
+```
+
+### Tijdsintelligentie
+
+```dax
+// ─── VERGELIJKING MET VORIG JAAR ─────────────────────────────────────
+
+Omzet Vorig Jaar =
+CALCULATE(
+    [Totale Omzet],
+    SAMEPERIODLASTYEAR(DimDate[Date])
+)
+
+YoY Groei Bedrag = [Totale Omzet] - [Omzet Vorig Jaar]
+
+YoY Groei % =
+DIVIDE(
+    [YoY Groei Bedrag],
+    [Omzet Vorig Jaar],
+    BLANK()  // Geen getal als er geen vergelijking mogelijk is
+)
+
+// ─── YEAR-TO-DATE ─────────────────────────────────────────────────────
+
+Omzet YTD = TOTALYTD([Totale Omzet], DimDate[Date])
+
+Omzet YTD Vorig Jaar =
+CALCULATE(
+    [Omzet YTD],
+    SAMEPERIODLASTYEAR(DimDate[Date])
+)
+
+// ─── ROLLING 12 MAANDEN ───────────────────────────────────────────────
+
+Omzet Rolling 12M =
+CALCULATE(
+    [Totale Omzet],
+    DATESINPERIOD(
+        DimDate[Date],
+        LASTDATE(DimDate[Date]),  // Einddatum = geselecteerde periode
+        -12,
+        MONTH
+    )
+)
+
+// ─── MAAND-OVER-MAAND ─────────────────────────────────────────────────
+
+Omzet Vorige Maand =
+CALCULATE(
+    [Totale Omzet],
+    PREVIOUSMONTH(DimDate[Date])
+)
+
+MoM Groei % =
+DIVIDE(
+    [Totale Omzet] - [Omzet Vorige Maand],
+    [Omzet Vorige Maand],
+    BLANK()
+)
+```
+
+### Geavanceerde maatregelen
+
+```dax
+// ─── LOPEND TOTAAL ────────────────────────────────────────────────────
+
+Omzet Cumulatief =
+CALCULATE(
+    [Totale Omzet],
+    FILTER(
+        ALL(DimDate[Date]),
+        DimDate[Date] <= MAX(DimDate[Date])
+    )
+)
+
+// ─── RANG ─────────────────────────────────────────────────────────────
+
+Klant Rang op Omzet =
+IF(
+    HASONEVALUE(DimCustomer[CustomerCode]),
+    RANKX(
+        ALL(DimCustomer),
+        [Totale Omzet],
+        ,
+        DESC,
+        Dense
+    ),
+    BLANK()
+)
+
+// ─── DYNAMISCHE TARGETS ───────────────────────────────────────────────
+
+// Verschil tussen werkelijk en budget
+Verschil Omzet vs Budget =
+[Totale Omzet] - SUM(BudgetData[Budget])
+
+Bereikt Budget % =
+DIVIDE([Totale Omzet], SUM(BudgetData[Budget]), 0)
+
+// KPI status (voor KPI Visual)
+Budget Status =
+SWITCH(
+    TRUE(),
+    [Bereikt Budget %] >= 1.05, "Boven doel",
+    [Bereikt Budget %] >= 0.95, "Op koers",
+    [Bereikt Budget %] >= 0.80, "Risico",
+    "Kritisch"
+)
+```
+
+---
+
+## Power BI Best Practices
+
+### Wat je WEL doet
+
+```
+✅ Bouw een star schema — altijd, geen uitzonderingen
+✅ Maak één DimDate tabel — gebruik die voor alle tijdsberekeningen
+✅ Gebruik measures (maatregelen) i.p.v. berekende kolommen waar mogelijk
+   → Measures worden berekend bij query time, kolommen bij refresh
+✅ Geef measures en kolommen duidelijke namen in de eindgebruikerstaal
+✅ Gebruik Row-Level Security (RLS) zodat gebruikers alleen hun data zien
+✅ Zet automatisch vernieuwen in via Power BI Service
+✅ Gebruik "Vernieuwen op achtergrond" voor grote datasets
+```
+
+### Wat je NIET doet
+
+```
+❌ Geen relationele structuur (alles in één brede tabel) → traag en incorrect
+❌ VLOOKUP logica in Power Query → doet hetzelfde als relaties, maar slechter
+❌ Complexe berekeningen in Power Query die ook in DAX kunnen
+❌ DirectQuery gebruiken als Import ook kan → DirectQuery is altijd trager
+❌ Kolommen laden die je niet nodig hebt → groter model, tragere queries
+❌ Datum behandelen als tekst (bijv. "2026-01-01") → geen tijdsintelligentie mogelijk
+```
+
+### Row-Level Security (RLS)
+
+RLS zorgt dat gebruikers alleen de data zien die ze mogen zien:
+
+```dax
+// Rol: "RegioManager"
+// Filter op DimCustomer zodat medewerker alleen zijn regio ziet
+[ResponsibleManagerEmail] = USERPRINCIPALNAME()
+// USERPRINCIPALNAME() geeft het emailadres van de ingelogde gebruiker
 ```
 
 ---
 
 ## Excel voor BI
 
+Excel is niet weg te denken uit het BI landschap — ook al gebruiken we Power BI. Het is ideaal voor ad-hoc analyses, financiële modellen en rapporten die flexibel moeten zijn.
+
 ### Power Query in Excel
 
-- **Data → Get Data → From Database → SQL Server**
-- Verbind met dezelfde views die Power BI ook gebruikt — één bron van waarheid
-- Gebruik **Power Pivot** (gratis in Excel) voor eenvoudige data modellen
+Excel heeft dezelfde Power Query engine als Power BI:
+1. **Data → Gegevens ophalen → Van database → Van SQL Server**
+2. Verbind met dezelfde views die Power BI ook gebruikt
+3. Resultaat: consistent, automatisch vernieuwen, geen copy-paste
 
-### Handige Excel formules voor BI
+### Moderne Excel formules voor BI
 
 ```excel
-# XLOOKUP (moderne vervanger van VLOOKUP)
-=XLOOKUP(A2, KlantenTabel[KlantId], KlantenTabel[KlantNaam], "Niet gevonden")
+=== XLOOKUP — Moderne VLOOKUP ===
+// Zoek klantnaam op basis van klant-ID
+=XLOOKUP(A2, KlantenTabel[KlantId], KlantenTabel[KlantNaam], "Niet gevonden", 0)
+//        ↑           ↑                     ↑                       ↑          ↑
+//      Zoekwaarde  Zoekbereik         Resultaatbereik         Als niet gevonden  Exacte match
 
-# Dynamische array — unieke waarden
-=UNIQUE(B2:B100)
+=== FILTER — Dynamische filtering ===
+// Toon alle open orders van klant in A1
+=FILTER(
+    OrderenTabel,
+    (OrderenTabel[Status]="Open") * (OrderenTabel[KlantNaam]=A1),
+    "Geen orders gevonden"
+)
 
-# Voorwaardelijk aggregeren
-=SUMIFS(Bedrag, Regio, "Noord", Jaar, 2026)
-=COUNTIFS(Status, "Open", Klant, A2)
+=== UNIQUE — Unieke waarden ===
+=UNIQUE(KlantenTabel[Regio])  // Lijst van alle unieke regio's
 
-# Dynamisch dashboard via FILTER
-=FILTER(OrderenTabel, (OrderenTabel[Regio]=DropdownRegio) * (OrderenTabel[Jaar]=DropdownJaar))
+=== SORT + FILTER combineren ===
+// Top 5 klanten op omzet in geselecteerde regio
+=TAKE(
+    SORT(
+        FILTER(KlantenTabel, KlantenTabel[Regio]=DropdownRegio),
+        MATCH("Omzet", KlantenTabel[#Headers], 0),
+        -1  // Aflopend sorteren
+    ),
+    5  // Eerste 5 rijen
+)
+
+=== SUMIFS en COUNTIFS ===
+// Omzet voor regio Noord in jaar 2026
+=SUMIFS(
+    OrderenTabel[Omzet],
+    OrderenTabel[Regio], "Noord",
+    OrderenTabel[Jaar], 2026
+)
+
+// Aantal open orders ouder dan 7 dagen
+=COUNTIFS(
+    OrderenTabel[Status], "Open",
+    OrderenTabel[Datum], "<" & TODAY()-7
+)
 ```
 
 ---
 
-## Best Practices
+## KPI's en Rapportage Structuur
 
-- **Één bron van waarheid**: alle rapporten koppelen aan dezelfde views of datasets
-- **Incrementeel vernieuwen** in Power BI Service voor grote datasets
-- Gebruik **Row-Level Security (RLS)** in Power BI zodat gebruikers alleen hun eigen data zien
-- **Geen berekeningen in Power Query** die ook in DAX kunnen — DAX is sneller en dynamischer
-- Gebruik **geïmporteerde data** voor historische rapporten, **DirectQuery** alleen als echt nodig
+Een goede BI-rapportagestructuur heeft drie niveaus:
+
+```
+Niveau 1: STRATEGISCH (C-level)
+  → Maandelijks, kwartaallijks
+  → Omzet, marge, klanttevredenheid, marktaandeel
+  → Vergelijking met budget en vorig jaar
+
+Niveau 2: TACTISCH (Management)
+  → Wekelijks
+  → Omzet per regio/product/team
+  → OTD, voorraadniveaus, orderbacklog
+
+Niveau 3: OPERATIONEEL (Supervisors, teamleiders)
+  → Dagelijks, real-time
+  → Openstaande orders, picks vandaag, dock-bezetting
+  → Alerts bij afwijkingen
+```
 
 ---
 

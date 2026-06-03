@@ -1,347 +1,648 @@
 # WMS — WACS (Warehouse Management System)
 
-## Overzicht
+## Wat is een WMS en waarom?
 
-WACS is een Warehouse Management System dat alle warehouseprocessen beheert: van ontvangst en opslag tot picking, verpakking en verzending. Het is het hart van de logistieke operatie en integreert met TMS (TAS) voor transport en ERP (Business Central) voor voorraad en facturatie.
+Een **Warehouse Management System (WMS)** is de software die alle activiteiten in een magazijn aanstuurt en registreert. Zonder WMS werkt een magazijn op papier, whiteboards en geheugen — met alle fouten en inefficiënties van dien.
 
----
+**WACS** is het WMS dat in onze omgeving ingezet wordt voor logistieke operaties.
 
-## Kernprocessen
+**Wat een WMS doet:**
+- Weet precies wat er op welke locatie staat (voorraadlocaties)
+- Stuurt mensen aan: wie pikt wat, in welke volgorde
+- Zorgt voor correcte ontvangst (inbound) en verzending (outbound)
+- Communiceert met TMS (transport) en ERP (voorraad, facturatie)
+- Garandeert traceerbaarheid: waar is lot X nu, en waar is het geweest?
 
-```
-INBOUND (Ontvangst)
-    Leverancier → Aanmelding (ASN) → Ontvangst op dock
-    → Kwaliteitscontrole → Putaway naar locatie
-    → Bevestiging aan ERP (goederenontvangst)
-
-OPSLAG (Storage)
-    Locatiebeheer → Zone indeling → Slimme opslag
-    (snellopers dicht bij expeditie, zwaar onderaan)
-
-OUTBOUND (Verzending)
-    Verkooporder → Pickorder aanmaken
-    → Picking → Verpakking → Labeling
-    → Laadlijst → Verlading → Transport aan TAS
-
-VOORRAADBEHEER
-    Cyclustellingen → Correcties → FIFO/FEFO
-    → Voorraadrapportage naar ERP
-```
+**Zonder WMS:**
+- Mensen zoeken zelf naar producten → tijdverlies
+- Pickfouten → klachten, retours
+- Geen FIFO/FEFO → verlopen producten, verspilling
+- Voorraadinaccuratesse → te veel of te weinig bestellen
+- Geen traceerbaarheid → bij problemen geen antwoorden
 
 ---
 
-## Datamodel (conceptueel)
+## De Warehouseprocessen van A tot Z
 
 ```
-Warehouse
-├── Zones (A-koeling, B-normaal, C-gevaarlijk, ...)
-│   └── Aisles → Sections → Levels → Locations
-│       └── Location: Code, Type, Capacity (vol/kg), Status
+┌─────────────────────────────────────────────────────────────────────┐
+│                          INBOUND                                    │
+│                                                                     │
+│  Leverancier                                                        │
+│      ↓                                                              │
+│  ASN (Advance Ship Notice) → WACS weet wat er komt                 │
+│      ↓                                                              │
+│  Ontvangst op dock → medewerker scant leveringsbon                 │
+│      ↓                                                              │
+│  Controleren: aantallen, kwaliteit, uiterste datum                 │
+│      ↓                                                              │
+│  Inboeken: lot aanmaken, hoeveelheid registreren                   │
+│      ↓                                                              │
+│  Putaway: WACS wijst een locatie toe                               │
+│      ↓                                                              │
+│  Bevestigen: medewerker scant locatie + artikel                    │
+│      ↓ (voorraad zichtbaar in WACS + ERP)                         │
+└─────────────────────────────────────────────────────────────────────┘
 
-Articles (Artikelen)
-├── ArticleCode (= ProductCode in ERP/TMS)
-├── Description
-├── UOM (eenheden: ST, KG, PAL, ...)
-├── StorageConditions (temp, vochtigheid)
-├── DangerousGoods (ADR klasse)
-└── GTIN / Barcode
+┌─────────────────────────────────────────────────────────────────────┐
+│                          OPSLAG                                     │
+│                                                                     │
+│  Locaties zijn georganiseerd in zones, gangen, secties en vakken   │
+│  Elk artikel staat op één of meerdere locaties                     │
+│  WACS houdt bij: artikel, lot, hoeveelheid, status per locatie     │
+└─────────────────────────────────────────────────────────────────────┘
 
-Stock (Voorraad per locatie)
-├── Location
-├── Article
-├── Lot / Batch
-├── ExpiryDate
-├── Quantity
-└── Status (Vrij / Geblokkeerd / In picking)
-
-ReceiptOrder (Ontvangst)
-├── ReceiptNumber
-├── SupplierCode
-├── ExpectedDate / ActualDate
-└── Lines → Article, ExpectedQty, ReceivedQty, Lot, ExpiryDate
-
-PickOrder (Uitgifte)
-├── PickOrderNumber
-├── Reference (verkooporder/transportorder)
-├── Priority
-├── Status (Nieuw / In picking / Gereed / Verzonden)
-└── Lines
-    ├── Article, Quantity
-    ├── Assigned Location
-    └── Picked Quantity + Picker
+┌─────────────────────────────────────────────────────────────────────┐
+│                          OUTBOUND                                   │
+│                                                                     │
+│  Verkooporder (uit ERP) of Transportorder (uit TMS)                │
+│      ↓                                                              │
+│  WACS maakt pickorder aan                                          │
+│      ↓                                                              │
+│  WACS bepaalt welke locatie gepickt wordt (FEFO/FIFO)              │
+│      ↓                                                              │
+│  Medewerker krijgt pick-opdrachten op handterminal/app             │
+│      ↓                                                              │
+│  Picken: scan locatie → scan artikel → bevestig hoeveelheid        │
+│      ↓                                                              │
+│  Verpakken: inpakken, wegen, labelen                               │
+│      ↓                                                              │
+│  Laden: laden op vrachtwagen, afmelden in WACS                     │
+│      ↓                                                              │
+│  Bevestiging aan TMS (klaar voor transport) en ERP (voorraad --)  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Locatiebeheer
+## Datamodel — Hoe WACS data opslaat
 
 ### Locatiestructuur
 
+Elk opslagpunt in het magazijn heeft een unieke code die de positie beschrijft:
+
 ```
-WH-A-01-01-01
-│   │  │  │  └── Vak (01 = onderste)
-│   │  │  └───── Sectie (01 = eerste sectie in gang)
-│   │  └──────── Gang (01 = eerste gang)
-│   └─────────── Zone (A = normale opslag)
-└─────────────── Warehouse (WH = hoofdmagazijn)
+WH-A-01-02-03
+│   │  │  │  └── Vak:     03 = derde vak (verticaal level)
+│   │  │  └───── Sectie:  02 = tweede sectie (positie in de gang)
+│   │  └──────── Gang:    01 = eerste gang
+│   └─────────── Zone:    A  = normale opslag
+└─────────────── Magazijn: WH = hoofdmagazijn
+
+Andere zones:
+  WH-COOL-xx-xx-xx  = Koelruimte
+  WH-ADR-xx-xx-xx   = Gevaarlijke stoffen
+  WH-BLK-xx-xx-xx   = Geblokkeerde voorraad (kwaliteitshold)
+  WH-RTV-xx-xx-xx   = Return to Vendor (retour leverancier)
+  WH-STAGE-xx       = Staging area (klaar voor verlading)
 ```
 
-### Slimme putaway logica
+```sql
+-- Locatietabel in de database
+CREATE TABLE Locations (
+    Id              INT IDENTITY(1,1)   NOT NULL,
+    LocationCode    NVARCHAR(30)        NOT NULL,
+    WarehouseCode   NVARCHAR(10)        NOT NULL,
+    Zone            NVARCHAR(20)        NOT NULL,
+    Aisle           NVARCHAR(5)         NOT NULL,
+    Section         SMALLINT            NOT NULL,
+    Level           SMALLINT            NOT NULL,
+
+    -- Eigenschappen
+    LocationType    NVARCHAR(20)        NOT NULL  -- 'Bulk', 'Picking', 'Staging', 'Block'
+    MaxWeight       DECIMAL(10,2)           NULL, -- kg
+    MaxVolume       DECIMAL(10,4)           NULL, -- m³
+    IsActive        BIT                 NOT NULL  DEFAULT 1,
+    IsEmpty         BIT                 NOT NULL  DEFAULT 1,
+
+    -- Afstand tot expeditie (voor route optimalisatie)
+    DistanceFromDock SMALLINT           NOT NULL  DEFAULT 0,
+
+    CONSTRAINT PK_Locations PRIMARY KEY (Id),
+    CONSTRAINT UQ_Locations_Code UNIQUE (LocationCode)
+);
+```
+
+### Voorraad per locatie
+
+```sql
+CREATE TABLE StockLedger (
+    Id              INT IDENTITY(1,1)   NOT NULL,
+    LocationCode    NVARCHAR(30)        NOT NULL,
+    ArticleCode     NVARCHAR(30)        NOT NULL,
+    LotNumber       NVARCHAR(30)            NULL,
+    ExpiryDate      DATE                    NULL,
+    ReceiptDate     DATETIME2(0)        NOT NULL,
+
+    -- Hoeveelheden
+    QuantityOnHand  DECIMAL(12,3)       NOT NULL  DEFAULT 0,
+    QuantityReserved DECIMAL(12,3)      NOT NULL  DEFAULT 0,
+    QuantityAvailable AS (QuantityOnHand - QuantityReserved),  -- Berekende kolom
+
+    -- Status
+    Status          NVARCHAR(20)        NOT NULL  DEFAULT 'Free',
+    -- Free / Reserved / Blocked / InPicking / InTransit
+
+    -- Tracking
+    LastMovementAt  DATETIME2(0)            NULL,
+    LastCountDate   DATE                    NULL,
+
+    CONSTRAINT PK_Stock PRIMARY KEY (Id),
+    CONSTRAINT FK_Stock_Location FOREIGN KEY (LocationCode) REFERENCES Locations(LocationCode),
+    CONSTRAINT CHK_Stock_Qty CHECK (QuantityOnHand >= 0),
+    CONSTRAINT CHK_Stock_Reserved CHECK (QuantityReserved >= 0),
+    CONSTRAINT CHK_Stock_Status CHECK (Status IN ('Free','Reserved','Blocked','InPicking','InTransit'))
+);
+```
+
+---
+
+## Slimme Putaway — Waar zet je inkomende goederen?
+
+WACS moet automatisch de beste locatie kiezen bij ontvangst. Dit is de logica:
 
 ```csharp
 public class PutawayEngine
 {
-    public async Task<Location> SuggestLocationAsync(Article article, decimal quantity)
+    private readonly ILocationRepository _locationRepo;
+    private readonly IStockRepository _stockRepo;
+    private readonly IArticleRepository _articleRepo;
+
+    public async Task<PutawayAdvice> SuggestLocationAsync(
+        string articleCode, decimal quantity, string lotNumber)
     {
-        // 1. Zoek bestaande stock van zelfde artikel (consolidatie)
-        var existingLocation = await _stockRepo
-            .GetLocationsWithArticle(article.Code)
-            .Where(l => l.HasCapacityFor(quantity))
+        var article = await _articleRepo.GetAsync(articleCode);
+
+        // ─── STAP 1: Bepaal de juiste zone ──────────────────────────────
+        var targetZone = DetermineZone(article);
+
+        // ─── STAP 2: Consolidatie — zet bij bestaande stock van hetzelfde artikel ──
+        var existingLocations = await _stockRepo.GetLocationsWithArticleAsync(
+            articleCode, targetZone);
+
+        var consolidationLocation = existingLocations
+            .Where(loc =>
+                loc.QuantityAvailable < loc.Capacity &&        // Locatie heeft ruimte
+                (loc.ExpiryDate == null || loc.ExpiryDate == GetExpiryForLot(lotNumber)) // Zelfde datum
+            )
+            .OrderBy(loc => loc.DistanceFromDock)              // Dichtste locatie
+            .FirstOrDefault();
+
+        if (consolidationLocation != null)
+        {
+            return new PutawayAdvice
+            {
+                LocationCode = consolidationLocation.LocationCode,
+                Reason = "Consolidatie bij bestaande stock"
+            };
+        }
+
+        // ─── STAP 3: Vrije locatie in de juiste zone ─────────────────────
+        var emptyLocation = await _locationRepo.GetEmptyLocationsAsync(targetZone)
+            .Where(loc =>
+                (loc.MaxWeight == null || loc.MaxWeight >= article.WeightPerUnit * quantity) &&
+                (loc.MaxVolume == null || loc.MaxVolume >= article.VolumePerUnit * quantity)
+            )
+            .OrderBy(loc => IsHighTurnover(article)
+                ? loc.DistanceFromDock      // Snellopers: dicht bij expeditie
+                : -loc.DistanceFromDock)    // Langzame lopers: achteraan
             .FirstOrDefaultAsync();
 
-        if (existingLocation != null)
-            return existingLocation;
+        if (emptyLocation == null)
+            throw new NoLocationAvailableException(targetZone, articleCode);
 
-        // 2. Kies zone op basis van artikel eigenschappen
-        var zone = article.RequiresCooling ? "COOL"
-                 : article.IsDangerousGoods ? "ADR"
-                 : article.IsHighTurnover ? "A"    // Snelloperszone, dicht bij expeditie
-                 : "B";
-
-        // 3. Selecteer lege locatie (LIFO voor leegmaken gangpaden)
-        return await _locationRepo
-            .GetEmptyLocationsInZone(zone)
-            .Where(l => l.WeightCapacity >= article.WeightPerUnit * quantity)
-            .OrderBy(l => l.DistanceFromDock)
-            .FirstOrDefaultAsync()
-            ?? throw new NoLocationAvailableException(zone);
+        return new PutawayAdvice
+        {
+            LocationCode = emptyLocation.LocationCode,
+            Reason = $"Vrije locatie in zone {targetZone}"
+        };
     }
+
+    private string DetermineZone(Article article)
+    {
+        if (article.RequiresCooling) return "COOL";
+        if (article.IsDangerousGoods) return "ADR";
+        if (article.IsBulkItem) return "BULK";
+        if (IsHighTurnover(article)) return "A";  // Snelloperszone
+        return "B";                                // Standaard
+    }
+
+    private bool IsHighTurnover(Article article)
+        => article.AvgMonthlyMovements > 50;
 }
 ```
 
 ---
 
-## Picking
+## Picking — Goederen verzamelen
 
-### Pickwave strategie
+### Pickstrategieën uitgelegd
 
+**1. Order Picking** — één picker, één order
 ```
-Wave picking (batch meerdere orders tegelijk):
-    Voordeel: minder kilometers in magazijn
-    Nadeel: orders moeten samen gesorteerd worden
-
-Order picking (één order per keer):
-    Voordeel: eenvoudig, geen sortering nodig
-    Nadeel: meer kilometers bij hoge ordervolumes
-
-Zone picking (picker blijft in zijn zone):
-    Voordeel: specialisatie, minder fouten
-    Nadeel: orders moeten samengevoegd worden (merge point)
+Medewerker pikt alle regels van één order tegelijk.
+✅ Eenvoudig, geen sortering nodig
+❌ Veel looproutes als orders verspreid over het magazijn liggen
+👍 Gebruik bij: kleine volumes, weinig orders, urgente orders
 ```
 
-### Pick volgorde optimalisatie
+**2. Batch Picking** — één picker, meerdere orders tegelijk
+```
+Medewerker pikt meerdere orders in één ronde.
+Na het picken worden de goederen gesorteerd per order.
+✅ Minder looproutes, hogere efficiëntie
+❌ Sortering na het picken nodig (sorteertafel of -conveyor)
+👍 Gebruik bij: veel kleine orders, vergelijkbare producten
+```
+
+**3. Zone Picking** — pickers per zone
+```
+Elke picker werkt in zijn eigen zone.
+Order wordt doorgegeven van zone naar zone.
+✅ Specialisatie, pickers kennen hun zone perfect
+❌ Coördinatie nodig, orders moeten samengevoegd worden
+👍 Gebruik bij: grote magazijnen, gespecialiseerde zones (ADR, koel)
+```
+
+**4. Wave Picking** — geplande pickgolven
+```
+Orders worden gebundeld in "waves" (golven) gebaseerd op carrier, leverdatum.
+Alle orders in een wave worden tegelijk vrijgegeven.
+✅ Optimale benutting van mensen en equipment
+❌ Planningscomplexiteit
+👍 Gebruik bij: vaste vertrektijden vrachtwagens, hoge volumes
+```
+
+### FEFO picklogica (SQL)
 
 ```sql
--- Genereer picklijst geoptimaliseerd op looproute
-SELECT
-    pol.PickOrderLineId,
-    pol.ArticleCode,
-    pol.Description,
-    pol.QuantityToPick,
-    s.LocationCode,
-    l.Aisle,
-    l.Section,
-    l.Level,
-    s.LotNumber,
-    s.ExpiryDate,
-    -- Sortering: gang, dan sectie zigzag, dan level
-    ROW_NUMBER() OVER (
-        ORDER BY
+-- FEFO = First Expired First Out: kortste houdbaarheidsdatum eerst
+-- Dit is verplicht bij voeding, farma, cosmetica
+
+CREATE OR ALTER PROCEDURE usp_GetPickSuggestion
+    @ArticleCode    NVARCHAR(30),
+    @QuantityNeeded DECIMAL(12,3),
+    @MinShelfLife   INT = 30  -- Minimum resterende houdbaarheid in dagen
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    WITH AvailableStock AS (
+        SELECT
+            s.LocationCode,
+            s.LotNumber,
+            s.ExpiryDate,
+            s.QuantityAvailable,
             l.Aisle,
-            CASE WHEN CAST(l.Aisle AS INT) % 2 = 0
-                 THEN l.Section           -- even gang: van voor naar achter
-                 ELSE 999 - l.Section     -- oneven gang: van achter naar voor
-            END,
-            l.Level
-    ) AS PickSequence
-FROM PickOrderLines pol
-INNER JOIN Stock s ON s.ArticleCode = pol.ArticleCode
-    AND s.Status = 'Free'
-    AND (s.ExpiryDate IS NULL OR s.ExpiryDate > GETDATE())  -- FEFO
-INNER JOIN Locations l ON l.LocationCode = s.LocationCode
-WHERE pol.PickOrderId = @PickOrderId
-ORDER BY PickSequence;
+            l.Section,
+            l.Level,
+            l.DistanceFromDock,
+            -- FEFO sortering: kortste houdbaarheidsdatum eerst
+            ROW_NUMBER() OVER (
+                ORDER BY
+                    COALESCE(s.ExpiryDate, '9999-12-31') ASC,
+                    s.ReceiptDate ASC,
+                    l.DistanceFromDock ASC
+            ) AS PickPriority
+        FROM StockLedger s
+        INNER JOIN Locations l ON l.LocationCode = s.LocationCode
+        WHERE s.ArticleCode = @ArticleCode
+          AND s.Status = 'Free'
+          AND s.QuantityAvailable > 0
+          AND (
+              s.ExpiryDate IS NULL OR
+              s.ExpiryDate >= DATEADD(DAY, @MinShelfLife, GETDATE())
+          )
+    ),
+    -- Bereken hoeveel we van elke locatie nodig hebben
+    PickAllocation AS (
+        SELECT
+            LocationCode,
+            LotNumber,
+            ExpiryDate,
+            QuantityAvailable,
+            Aisle,
+            Section,
+            Level,
+            PickPriority,
+            -- Hoeveel picken we van deze locatie?
+            LEAST(
+                QuantityAvailable,
+                @QuantityNeeded - COALESCE(
+                    SUM(QuantityAvailable) OVER (
+                        ORDER BY PickPriority
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ), 0
+                )
+            ) AS QuantityToPick
+        FROM AvailableStock
+        WHERE SUM(QuantityAvailable) OVER (
+            ORDER BY PickPriority
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) - QuantityAvailable < @QuantityNeeded
+    )
+    SELECT
+        LocationCode,
+        LotNumber,
+        ExpiryDate,
+        QuantityToPick,
+        -- Looproute volgorde (zigzag door het magazijn)
+        ROW_NUMBER() OVER (
+            ORDER BY
+                Aisle,
+                CASE WHEN CAST(Aisle AS INT) % 2 = 0
+                     THEN Section
+                     ELSE 9999 - Section  -- Terugweg in oneven gangen
+                END,
+                Level
+        ) AS RouteSequence
+    FROM PickAllocation
+    WHERE QuantityToPick > 0
+    ORDER BY RouteSequence;
+END;
+```
+
+---
+
+## Cyclustellingen — Voorraadinaccuratesse bestrijden
+
+Voorraadinaccuratesse is een van de grootste uitdagingen in elk magazijn. Cyclustellingen zijn de oplossing: in plaats van één grote jaarlijkse inventaris, tel je continu kleine stukjes.
+
+### Hoe werkt een cyclustelling?
+
+```
+1. WACS selecteert dagelijks een set locaties om te tellen
+   → Baseer dit op: niet lang geteld, hoge beweging, lage accuratessescore
+
+2. Medewerker gaat naar de locatie (zonder te weten wat WACS verwacht)
+   → Scan de locatiebarcode
+   → Tel het artikel en voer in wat je ziet
+
+3. WACS vergelijkt: systeemhoeveelheid vs. getelde hoeveelheid
+   → Geen verschil: locatie afgesloten, score verbeterd
+   → Verschil < drempelwaarde: automatisch corrigeren + log
+   → Verschil > drempelwaarde: tweede teller inzetten
+
+4. Correcties worden gelogd en doorgestuurd naar ERP
+```
+
+```sql
+-- Automatisch telplan genereren
+CREATE OR ALTER PROCEDURE usp_GenerateCyclePlan
+    @TargetCount INT = 50  -- Hoeveel locaties per dag tellen
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Verwijder oud plan van vandaag (indien hertelling nodig)
+    DELETE FROM CyclePlan WHERE PlanDate = CAST(GETDATE() AS DATE);
+
+    -- Selecteer te tellen locaties op basis van prioriteit
+    INSERT INTO CyclePlan (PlanDate, LocationCode, ArticleCode, SystemQuantity, Priority)
+    SELECT TOP (@TargetCount)
+        CAST(GETDATE() AS DATE),
+        s.LocationCode,
+        s.ArticleCode,
+        s.QuantityOnHand,
+        -- Prioriteitsscore (hoger = urgenter om te tellen)
+        CAST(
+            -- Dagen sinds laatste telling (max 100 punten)
+            LEAST(DATEDIFF(DAY, s.LastCountDate, GETDATE()), 100) * 0.3 +
+            -- Aantal bewegingen afgelopen maand (max 100 punten)
+            LEAST(COALESCE(mv.MovementsLast30Days, 0), 100) * 0.4 +
+            -- Lage accuratessescore (0 of 50 punten)
+            CASE WHEN s.AccuracyScore < 0.98 THEN 50 ELSE 0 END +
+            -- Nooit geteld (30 punten)
+            CASE WHEN s.LastCountDate IS NULL THEN 30 ELSE 0 END
+        AS INT) AS Priority
+    FROM StockLedger s
+    LEFT JOIN (
+        SELECT ArticleCode, COUNT(*) AS MovementsLast30Days
+        FROM StockMutations
+        WHERE MutationDate >= DATEADD(DAY, -30, GETDATE())
+        GROUP BY ArticleCode
+    ) mv ON mv.ArticleCode = s.ArticleCode
+    WHERE s.QuantityOnHand > 0
+      AND s.LocationCode NOT LIKE 'WH-STAGE%'  -- Staging niet tellen
+      AND NOT EXISTS (
+          -- Vandaag al gepland
+          SELECT 1 FROM CyclePlan
+          WHERE LocationCode = s.LocationCode
+            AND PlanDate = CAST(GETDATE() AS DATE)
+      )
+    ORDER BY Priority DESC;
+
+    SELECT COUNT(*) AS GeplanndeLocaties FROM CyclePlan
+    WHERE PlanDate = CAST(GETDATE() AS DATE);
+END;
 ```
 
 ---
 
 ## Integratie WACS ↔ TAS (Transport)
 
-### Inbound: TAS stuurt pickorder
-
-```http
-POST /api/wacs/pickorders
-Authorization: Bearer {token}
-Content-Type: application/json
-
-{
-  "reference": "TAS-ORD-2026-001",
-  "requestedReadyBy": "2026-06-04T06:00:00",
-  "priority": "High",
-  "deliveryAddress": {
-    "name": "Klant BV",
-    "street": "Havenstraat 1",
-    "city": "Antwerpen",
-    "country": "BE"
-  },
-  "lines": [
-    {
-      "lineNumber": 1,
-      "articleCode": "ART-001",
-      "quantity": 10,
-      "uom": "ST"
-    }
-  ]
-}
-```
-
-### Outbound: WACS bevestigt gereed
+WACS en TAS moeten nauw samenwerken: TAS weet wanneer de vrachtwagen vertrekt, WACS weet wanneer de goederen gepickt zijn.
 
 ```csharp
-public async Task NotifyTASOrderReadyAsync(PickOrder pickOrder)
+// WACSClient in het TAS systeem
+public class WacsIntegrationService
 {
-    var notification = new TASReadyNotification
+    private readonly HttpClient _http;
+    private readonly ILogger<WacsIntegrationService> _logger;
+
+    // TAS vraagt WACS om een pickorder aan te maken
+    public async Task<string> CreatePickOrderAsync(TransportOrder transportOrder)
     {
-        TASReference = pickOrder.TASReference,
-        WACSReference = pickOrder.PickOrderNumber,
-        ReadyAt = DateTime.UtcNow,
-        ActualLines = pickOrder.Lines.Select(l => new TASReadyLine
+        var request = new WacsPickOrderRequest
         {
-            ArticleCode = l.ArticleCode,
-            QuantityPicked = l.QuantityPicked,
-            LotNumber = l.AssignedLot,
-            LocationPicked = l.PickedFromLocation
-        }).ToList(),
-        TotalWeight = pickOrder.Lines.Sum(l => l.WeightPicked),
-        TotalVolume = pickOrder.Lines.Sum(l => l.VolumePicked)
-    };
-
-    await _tasClient.PostReadyNotificationAsync(notification);
-}
-```
-
----
-
-## Integratie WACS ↔ Business Central
-
-### Voorraadmutaties synchroniseren
-
-```csharp
-public class StockSyncService
-{
-    // Elke mutatie in WACS wordt bijgehouden en gesynchroniseerd naar BC
-    public async Task SyncMutationToBCAsync(StockMutation mutation)
-    {
-        var bcEntry = new BCItemJournalLine
-        {
-            ItemNo = mutation.ArticleCode,
-            LocationCode = "WAREHOUSE",
-            EntryType = mutation.Type switch
+            TasReference = transportOrder.OrderNumber,
+            RequestedReadyBy = transportOrder.PlannedLoadingTime.AddHours(-1),
+            Priority = MapPriority(transportOrder.Priority),
+            DeliveryInfo = new WacsDeliveryInfo
             {
-                MutationType.Receipt => BCEntryType.PositiveAdjustment,
-                MutationType.Shipment => BCEntryType.NegativeAdjustment,
-                MutationType.Correction => mutation.Quantity > 0
-                    ? BCEntryType.PositiveAdjustment
-                    : BCEntryType.NegativeAdjustment,
-                _ => throw new ArgumentException("Onbekend mutatietype")
+                CustomerCode = transportOrder.CustomerCode,
+                Address = transportOrder.DeliveryAddress
             },
-            Quantity = Math.Abs(mutation.Quantity),
-            LotNo = mutation.LotNumber,
-            ExpirationDate = mutation.ExpiryDate,
-            ExternalDocumentNo = mutation.Reference
+            Lines = transportOrder.Lines.Select(l => new WacsPickLine
+            {
+                LineNumber = l.LineNumber,
+                ArticleCode = l.ProductCode,
+                QuantityOrdered = l.Quantity,
+                UnitOfMeasure = l.UOM
+            }).ToList()
         };
 
-        await _bcClient.PostItemJournalLineAsync(bcEntry);
+        var response = await _http.PostAsJsonAsync("/api/pickorders", request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            _logger.LogError("WACS pickorder aanmaken gefaald voor {TasRef}: {Error}",
+                transportOrder.OrderNumber, error);
+            throw new IntegrationException($"WACS fout: {error}");
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<WacsPickOrderResponse>();
+        return result!.WacsReference;
+    }
+
+    // WACS stuurt een webhook als de pickorder klaar is
+    // Dit endpoint staat in de TAS API
+    public async Task HandlePickReadyWebhookAsync(WacsReadyNotification notification)
+    {
+        _logger.LogInformation(
+            "WACS meldt pickorder klaar: {WacsRef} → TAS Ref: {TasRef}",
+            notification.WacsReference, notification.TasReference);
+
+        // Werk de transportorder bij in TAS
+        await _transportOrderService.MarkPickingCompleteAsync(
+            tasReference: notification.TasReference,
+            actualWeight: notification.TotalWeightKg,
+            actualVolume: notification.TotalVolumeM3,
+            lines: notification.Lines.Select(l => new PickedLineDto
+            {
+                ArticleCode = l.ArticleCode,
+                QuantityPicked = l.QuantityPicked,
+                LotNumber = l.LotNumber,
+                ExpiryDate = l.ExpiryDate
+            }).ToList()
+        );
     }
 }
 ```
 
 ---
 
-## Voorraadbeheer & Cyclustellingen
+## Integratie WACS ↔ Business Central (ERP)
 
-### FIFO / FEFO principe
+Elke voorraadmutatie in WACS moet gesynchroniseerd worden naar BC, zodat de boekhouding correct is.
 
-- **FIFO** (First In First Out): oudste voorraad eerst weg — gebruikt voor niet-bederfelijke goederen
-- **FEFO** (First Expired First Out): kortste houdbaarheidsdatum eerst — verplicht voor voedsel, farma
+```csharp
+public class EarningsSyncService
+{
+    private readonly IBCClient _bcClient;
+    private readonly IStockMutationRepository _mutations;
 
-```sql
--- FEFO: welke lot bij het picken gebruiken?
-SELECT TOP 1
-    s.LotNumber,
-    s.ExpiryDate,
-    s.LocationCode,
-    s.Quantity
-FROM Stock s
-WHERE s.ArticleCode = @ArticleCode
-  AND s.Status = 'Free'
-  AND s.Quantity >= @QuantityRequired
-  AND (s.ExpiryDate IS NULL OR s.ExpiryDate >= DATEADD(DAY, @MinRemainingDays, GETDATE()))
-ORDER BY
-    COALESCE(s.ExpiryDate, '9999-12-31') ASC,  -- Kortste datum eerst
-    s.ReceiptDate ASC;                           -- Bij gelijke datum: oudste ontvangst
-```
+    // Synchroniseer alle niet-gesynchroniseerde mutaties naar BC
+    public async Task SyncPendingMutationsAsync()
+    {
+        var pending = await _mutations.GetPendingAsync(maxCount: 100);
 
-### Cyclustellingplan
+        foreach (var mutation in pending)
+        {
+            try
+            {
+                var bcEntry = new BCItemJournalLine
+                {
+                    JournalTemplateName = "WACS-SYNC",
+                    JournalBatchName = DateTime.Today.ToString("yyyyMMdd"),
+                    ItemNo = mutation.ArticleCode,
+                    LocationCode = "WACS",
+                    EntryType = MapEntryType(mutation.Type),
+                    Quantity = Math.Abs(mutation.Quantity),
+                    UnitOfMeasureCode = mutation.UOM,
+                    LotNo = mutation.LotNumber,
+                    ExpirationDate = mutation.ExpiryDate,
+                    Description = $"WACS: {mutation.Reference}",
+                    ExternalDocumentNo = mutation.Reference
+                };
 
-```sql
--- Genereer telplan: artikelen met hoogste omzet of laag betrouwbaarheidsscore eerst
-SELECT TOP 50
-    a.ArticleCode,
-    a.Description,
-    s.LocationCode,
-    s.Quantity AS SystemQuantity,
-    s.LastCountDate,
-    DATEDIFF(DAY, s.LastCountDate, GETDATE()) AS DaysSinceCount,
-    mv.MovementsLast30Days,
-    -- Score: hoe hoger, hoe urgenter om te tellen
-    (DATEDIFF(DAY, s.LastCountDate, GETDATE()) * 0.3
-     + mv.MovementsLast30Days * 0.5
-     + CASE WHEN s.StockAccuracy < 0.98 THEN 50 ELSE 0 END) AS CountPriority
-FROM Articles a
-INNER JOIN Stock s ON s.ArticleCode = a.ArticleCode
-LEFT JOIN (
-    SELECT ArticleCode, COUNT(*) AS MovementsLast30Days
-    FROM StockMutations
-    WHERE MutationDate >= DATEADD(DAY, -30, GETDATE())
-    GROUP BY ArticleCode
-) mv ON mv.ArticleCode = a.ArticleCode
-WHERE a.IsActive = 1
-ORDER BY CountPriority DESC;
+                await _bcClient.PostItemJournalLineAsync(bcEntry);
+
+                await _mutations.MarkSyncedAsync(mutation.Id);
+            }
+            catch (Exception ex)
+            {
+                await _mutations.MarkFailedAsync(mutation.Id, ex.Message);
+                _logger.LogError(ex,
+                    "Sync naar BC gefaald voor mutatie {MutationId}", mutation.Id);
+            }
+        }
+    }
+
+    private BCEntryType MapEntryType(MutationType type) => type switch
+    {
+        MutationType.Receipt => BCEntryType.PositiveAdjustment,
+        MutationType.Shipment => BCEntryType.NegativeAdjustment,
+        MutationType.PositiveCorrection => BCEntryType.PositiveAdjustment,
+        MutationType.NegativeCorrection => BCEntryType.NegativeAdjustment,
+        MutationType.Transfer => BCEntryType.Transfer,
+        _ => throw new ArgumentException($"Onbekend type: {type}")
+    };
+}
 ```
 
 ---
 
 ## KPI's voor Warehouse
 
-| KPI | Definitie | Streefwaarde |
-|-----|-----------|--------------|
-| Order Accuracy | % orders zonder fouten gepicked | > 99.5% |
-| On-Time Dispatch | % orders klaar voor transport op tijd | > 98% |
-| Stock Accuracy | % locaties correct bij telling | > 99% |
-| Picks per uur | Productiviteit per picker | Benchmark-afhankelijk |
-| FEFO compliance | % pickorders die FEFO respecteren | 100% |
-| Dock-to-Stock tijd | Tijd van ontvangst tot opgeslagen | < 4u |
+### Operationele KPI's
+
+| KPI | Definitie | Hoe meten | Streefwaarde |
+|-----|-----------|-----------|--------------|
+| **Order Accuracy** | Juiste product, juiste hoeveelheid, juiste locatie | Fouten / totale picks | > 99.5% |
+| **On-Time Dispatch** | Order klaar vóór deadline | Te laat / totaal | > 98% |
+| **Stock Accuracy** | Systeem klopt met werkelijkheid | Juiste / totale locaties bij telling | > 99% |
+| **Picks per uur** | Productiviteit per picker | Picks / uururen | Benchmark-afhankelijk |
+| **FEFO Compliance** | FEFO correct gevolgd | Niet-FEFO picks / totaal | 100% |
+| **Dock-to-Stock tijd** | Ontvangst tot opgeslagen | Gemiddelde tijd | < 4u |
+| **Space Utilization** | Bezettingsgraad van het magazijn | Bezette locaties / totaal | 70-85% |
+
+### Rapportage query
+
+```sql
+-- Dagelijks KPI rapport
+SELECT
+    CAST(GETDATE() AS DATE) AS ReportDate,
+
+    -- Order Accuracy
+    CAST(
+        SUM(CASE WHEN po.HasErrors = 0 THEN 1 ELSE 0 END) * 100.0 /
+        NULLIF(COUNT(*), 0) AS DECIMAL(5,2)
+    ) AS OrderAccuracyPct,
+
+    -- On-Time Dispatch
+    CAST(
+        SUM(CASE WHEN po.CompletedAt <= po.RequiredBy THEN 1 ELSE 0 END) * 100.0 /
+        NULLIF(SUM(CASE WHEN po.CompletedAt IS NOT NULL THEN 1 ELSE 0 END), 0) AS DECIMAL(5,2)
+    ) AS OnTimeDispatchPct,
+
+    -- Productiviteit
+    SUM(po.TotalPickLines) AS TotalPicks,
+    CAST(SUM(po.TotalPickLines) * 1.0 /
+        NULLIF(SUM(DATEDIFF(MINUTE, po.StartedAt, po.CompletedAt)) / 60.0, 0)
+    AS DECIMAL(8,1)) AS PicksPerHour
+
+FROM PickOrders po
+WHERE CAST(po.CompletedAt AS DATE) = CAST(GETDATE() AS DATE)
+  AND po.Status = 'Completed';
+```
 
 ---
 
 ## Best Practices
 
-- **Barcode/RF-scanning** op elke stap: ontvangst, putaway, picking, verzending — geen handmatige invoer
-- **Locatie confirmatie**: picker scant locatie én artikel — dubbele verificatie
-- **Exception management**: geblokkeerde voorraad, kwaliteitshold en quarantaine altijd zichtbaar
-- **Real-time dashboards**: zie actuele warehousestatus op elk moment (bezetting, openstaande picks, dock status)
-- **Integratielog**: elke bericht van/naar TAS en BC bijhouden voor troubleshooting
+### Scannen is heilig
+
+Elke handeling in het magazijn moet bevestigd worden via een scan. Handmatige invoer = fouten.
+
+```
+Ontvangst: scan leveringsbon → scan artikel barcode → scan locatie
+Putaway:   scan pickorder → scan artikel → scan doellocatie
+Picken:    scan picklijst → scan locatie → scan artikel → bevestig hoeveelheid
+Verladen:  scan vrachtwagen/dock → scan alle dozen/pallets
+```
+
+### De dubbele-scan regel
+
+Bij kritische operaties (bijv. gevaarlijke stoffen, medicijnen): scanner bevestigt locatie EN artikel, en daarna nogmaals. Twee keer fout scannen is vrijwel onmogelijk.
+
+### Exception management
+
+- **Geblokkeerde voorraad** (kwaliteitsproblemen): aparte zone, aparte status
+- **Short pick** (te weinig voorraad): automatisch melden aan planner
+- **Locatiefout** (artikel staat niet waar het hoort): exception workflow starten
+- **Beschadigde goederen**: foto + rapport, aparte locatie
 
 ---
 
